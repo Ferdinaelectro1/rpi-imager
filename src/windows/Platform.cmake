@@ -26,8 +26,7 @@ add_custom_command(
 
 set(PLATFORM_SOURCES
     windows/acceleratedcryptographichash_cng.cpp
-    dependencies/mountutils/src/windows/functions.cpp
-    dependencies/drivelist/src/windows/list.cpp
+    drivelist/drivelist_windows.cpp
     windows/winfile.cpp
     windows/winfile.h
     windows/bootimgcreator_windows.cpp

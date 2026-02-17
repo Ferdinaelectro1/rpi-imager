@@ -5,7 +5,7 @@
 
 #include "drivelistmodel.h"
 #include "config.h"
-#include "dependencies/drivelist/src/drivelist.hpp"
+#include "drivelist/drivelist.h"
 #include <QSet>
 #include <QDebug>
 
@@ -24,16 +24,18 @@ DriveListModel::DriveListModel(QObject *parent)
         {childDevicesRole, "childDevices"}
     };
 
-    // Enumerate drives in seperate thread, but process results in UI thread
-    connect(&_thread, SIGNAL(newDriveList(std::vector<Drivelist::DeviceDescriptor>)), SLOT(processDriveList(std::vector<Drivelist::DeviceDescriptor>)));
+    // Enumerate drives in separate thread, but process results in UI thread
+    connect(&_thread, &DriveListModelPollThread::newDriveList,
+            this, &DriveListModel::processDriveList);
     
     // Forward performance event signal
     connect(&_thread, &DriveListModelPollThread::eventDriveListPoll,
             this, &DriveListModel::eventDriveListPoll);
 }
 
-int DriveListModel::rowCount(const QModelIndex &) const
+int DriveListModel::rowCount(const QModelIndex &parent) const
 {
+    Q_UNUSED(parent)
     return _drivelist.count();
 }
 
@@ -60,6 +62,29 @@ QVariant DriveListModel::data(const QModelIndex &index, int role) const
 
 void DriveListModel::processDriveList(std::vector<Drivelist::DeviceDescriptor> l)
 {
+    // Check for enumeration error sentinel
+    // If present, emit error signal and don't process further
+    // The sentinel has device == "__error__" and error contains the message
+    if (!l.empty() && l[0].device == "__error__") {
+        QString errorMsg = QString::fromStdString(l[0].error);
+        if (_lastError != errorMsg) {
+            _lastError = errorMsg;
+            qWarning() << "Drive enumeration failed:" << errorMsg;
+            emit lastErrorChanged();        // For Q_PROPERTY binding
+            emit enumerationError(errorMsg); // For QML signal handler
+        }
+        // Don't clear the existing drive list - keep showing what we had
+        // This prevents UI flicker during transient errors
+        return;
+    }
+    
+    // Clear any previous error since enumeration succeeded
+    if (!_lastError.isEmpty()) {
+        _lastError.clear();
+        emit lastErrorChanged();         // For Q_PROPERTY binding
+        emit enumerationError(QString()); // For QML signal handler (empty = cleared)
+    }
+    
     QSet<QString> drivesInNewList;
 
     // First pass: collect all valid drives from the new list
@@ -78,11 +103,11 @@ void DriveListModel::processDriveList(std::vector<Drivelist::DeviceDescriptor> l
     };
     QList<NewDriveInfo> drivesToAdd;
 
-    for (auto &i: l)
+    for (const auto &i : l)
     {
         // Convert STL vector<string> to Qt QStringList
         QStringList mountpoints;
-        for (auto &s: i.mountpoints)
+        for (const auto &s : i.mountpoints)
         {
             mountpoints.append(QString::fromStdString(s));
         }
@@ -120,7 +145,7 @@ void DriveListModel::processDriveList(std::vector<Drivelist::DeviceDescriptor> l
 
             // Convert child devices (APFS volumes on macOS) to QStringList
             QStringList childDevices;
-            for (auto &s: i.childDevices)
+            for (const auto &s : i.childDevices)
             {
                 childDevices.append(QString::fromStdString(s));
             }
